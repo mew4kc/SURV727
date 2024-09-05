@@ -1,0 +1,73 @@
+---
+title: "Assignment 1"
+author: "Mychala Walker"
+format: html
+editor: visual
+---
+
+## Git and Github
+
+1)  Provide the link to the GitHub repo that you used to practice git from Week 1. It should have:
+
+## Reading Data
+
+2)  Read in the .dta version and store in an object called angell_stata.
+
+```{r}
+library(haven)
+angell_stata <- read_dta("Assignment1/angell.dta")
+```
+
+3)  Read in the .txt version and store it in an object called angell_txt.
+
+```{r}
+angell_txt <- read.table(url("https://stats.oarc.ucla.edu/wp-content/uploads/2016/02/angell.txt"), header = FALSE)
+```
+
+4)  What are the differences between angell_stata and angell_txt? Are there differences in the classes of the individual columns?
+
+```{r}
+identical(angell_stata, angell_txt)
+all.equal(angell_stata, angell_txt)
+
+mapply(setdiff, angell_stata, angell_txt)
+
+class(angell_stata)
+class(angell_txt)
+
+typeof(angell_stata)
+typeof(angell_txt)
+```
+
+Using the "typeof" function, it appears that both datasets are identical. However, using the "class" function, the angell_stata dataset was a tbl whereas the angell_txt dataset was a data frame. Also, the header names are different.
+
+4)  Make any updates necessary so that angell_txt is the same as angell_stata.
+
+```{r}
+
+angell_stata <- as.data.frame(angell_stata)
+angell_txt <- as.data.frame(angell_txt)
+
+colnames(angell_stata) <- c("city", "morint", "ethhet", "geomob", "region")
+colnames(angell_txt) <- c("city", "morint", "ethhet", "geomob", "region")
+
+identical(angell_stata, angell_txt)
+
+```
+
+5)  Describe the Ethnic Heterogeneity variable. Use descriptive statistics such as mean, median, standard deviation, etc. How does it differ by region
+
+```{r}
+
+summary(angell_stata$ethhet)
+median(angell_stata$ethhet)
+mean(angell_stata$ethhet)
+sd(angell_stata$ethhet)
+length(angell_stata$ethhet)
+```
+
+The ethnic heterogeineity variable is a 43 observation variable. It has a mean of 31.37, a median of 23.70, and a standard deviation of 20.41. It's lower and upper quintiles are 16.9 and 39, respectively. Its lower and upper boundaries are 10.6 and 84.50, respectively.
+
+## Describing Data
+
+## Writing Functions
