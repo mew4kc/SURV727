@@ -1,0 +1,17 @@
+---
+title: "test 1"
+author: "Mychala Walker"
+format: html
+editor: visual
+---
+
+## Hello World!
+
+Welcome to my github account.
+
+```{r}
+Thanks <- "Thanks for stopping by"
+print(Thanks)
+```
+
+test
