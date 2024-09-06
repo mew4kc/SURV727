@@ -7,7 +7,9 @@ editor: visual
 
 ## Git and Github
 
-1)  Provide the link to the GitHub repo that you used to practice git from Week 1. It should have:
+1)  Provide the link to the GitHub repo that you used to practice git from Week 1.
+
+https://github.com/mew4kc/SURV727
 
 ## Reading Data
 
@@ -70,4 +72,160 @@ The ethnic heterogeineity variable is a 43 observation variable. It has a mean o
 
 ## Describing Data
 
+7) Install the “MASS” package, load the package. Then, load the Boston dataset.
+```{r}
+install.packages("MASS")
+library(MASS)
+boston <- MASS::Boston
+
+```
+
+8) What is the type of the Boston object?
+
+```{r}
+typeof(boston)
+
+```
+
+9) What is the class of the Boston object?
+
+```{r}
+class(boston)
+
+```
+
+10) How many of the suburbs in the Boston data set bound the Charles river?
+11) Do any of the suburbs of Boston appear to have particularly high crime rates? Tax rates?
+Pupil-teacher ratios? Comment on the range of each variable.
+12) Describe the distribution of pupil-teacher ratio among the towns in this data set that have a per capita crime rate larger than 1. How does it differ from towns that have a per capita crime rate smaller than 1?
+
+
+
 ## Writing Functions
+
+13) Write a function that calculates 95% confidence intervals for a point estimate. The function should be called my_CI. When called with my_CI(2, 0.2), the function should print out “The 95% CI upper bound of point estimate 2 with standard error 0.2 is 2.392. The lower bound is 1.608.”
+
+```{r}
+my_CI <- function(PE, SE){
+    
+    lower = PE - 1.96 * SE
+    upper = PE + 1.96 * SE
+    
+   print(paste("The 95% CI upper bound of point estimate", PE, "with standard error", SE, "is", upper, ". The lower bound is", lower))
+   
+}
+
+my_CI(2, 0.2)
+
+```
+
+14) Create a new function called my_CI2 that does that same thing as the my_CI function but outputs a vector of length 2 with the lower and upper bound of the confidence interval instead of printing out the text. Use this to find the 95% confidence interval for a point estimate of 0 and standard error 0.4.
+
+```{r}
+
+my_CI2 <- function(PE, SE){
+    
+    lower = PE - 1.96 * SE
+    upper = PE + 1.96 * SE
+    
+   vector <- c(lower, upper)
+   
+   return(vector)
+   
+}
+
+my_CI2(0, 0.4)
+
+```
+
+15) Update the my_CI2 function to take any confidence level instead of only 95%. Call the new function my_CI3. You should add an argument to your function for confidence level. 
+
+```{r}
+
+my_CI3 <- function(PE, SE, CI){
+    quantiles <- (1 + CI)/2
+    
+    QN <- qnorm(quantiles)
+  
+    lower = PE - QN * SE
+    upper = PE + QN * SE
+    
+   vector <- c(lower, upper)
+   
+   vector
+}
+   
+# Complicated Way   
+q16 <- lm(ethhet ~ 1, angell_stata)
+
+confint(q16, level=0.99)   
+
+```
+
+16) Without hardcoding any numbers in the code, find a 99% confidence interval for Ethnic Heterogeneity in the Angell dataset. Find the standard error by dividing the standard deviation by the square root of the sample size.
+
+```{r}
+
+# Complicated Way
+my_cI4 <- function(data, CI) {
+  quantiles <- (1 + CI)/2
+    
+  QN <- qnorm(quantiles)
+    
+  sample_mean <- mean(data, na.rm = TRUE)
+  
+  sample_sd <- sd(data, na.rm = TRUE)
+  
+  sample_size <- length(data, na.rm=TRUE)
+  
+  standard_error <- sample_sd / sqrt(sample_size)
+
+  lower_bound <- sample_mean - QN * standard_error
+  upper_bound <- sample_mean + QN * standard_error
+  
+  result <- c(sample_mean, lower_bound, upper_bound)
+  
+  return(result)
+}
+
+confidence_interval <-  my_cI4(angell_stata$ethhet, 0.99)
+
+print(confidence_interval)
+
+# Simple Way
+q16 <- lm(ethhet ~ 1, angell_stata)
+
+confint(q16, level=0.99)   
+
+```
+
+
+17) Write a function that you can apply to the Angell dataset to get 95% confidence intervals. The function should take one argument: a vector. Use if-else statements to output NA and avoid error messages if the column in the data frame is not numeric or logical.
+
+```{r}
+
+my_cI5 <- function(data) {
+  quantiles <- (1 + 0.95)/2
+    
+  QN <- qnorm(quantiles)
+    
+  sample_mean <- mean(data, na.rm = TRUE)
+  
+  sample_sd <- sd(data, na.rm = TRUE)
+  
+  sample_size <- length(data, na.rm=TRUE)
+  
+  standard_error <- sample_sd / sqrt(sample_size)
+
+  lower_bound <- sample_mean - QN * standard_error
+  upper_bound <- sample_mean + QN * standard_error
+  
+  result <- c(sample_mean, lower_bound, upper_bound)
+  
+  return(result)
+}
+
+list <- lapply(angell_stata$ethhet, my_cI5)
+unlist(list)
+
+```
