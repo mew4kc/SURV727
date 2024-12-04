@@ -1,0 +1,652 @@
+---
+title: "Analysis of the health of Montgomery County, Maryland"
+subtitle: "Based on Social Determinants of Health from the U.S. Dept. of Health and Human Services"
+author: Mychala Walker
+format: html
+editor: visual
+---
+
+```{r libraries,include=FALSE, echo=FALSE}
+library(tidycensus)
+library(tidyverse)
+library(magrittr)
+library(tigris)
+library(factoextra)
+library(dplyr)
+library(tidyr)
+library(sf)
+library(stringr)
+library(cowplot)
+library(ggplot2)
+library(grid)
+library(ggforce) #extensions to ggplot2 
+library(tidygeocoder) #osm data
+library(ggmap) #google maps data
+library(lubridate) #date and time transformation
+Sys.getenv("CENSUS_API_KEY")
+Sys.setenv(GOOGLE_API_KEY = "your_api_key")
+register_google(key = Sys.getenv("GOOGLE_API_KEY"))
+
+```
+
+```{r Grabbing-Census-level-geographies, include=FALSE, echo=FALSE}
+moco_tracts <- tracts(state = "Maryland", county = "Montgomery", cb = TRUE, class = "sf") 
+
+surrounding_counties <- counties(state = "MD", cb = TRUE, class = "sf") %>%
+  filter(NAME %in% c("Frederick", "Carroll", "Howard", "Prince George's", "Montgomery")) %>%
+  bind_rows(
+    counties(state = "VA", cb = TRUE, class = "sf") %>% 
+      #filter(NAMELSAD %in% c("Fairfax County", "Loudoun County", "Arlington County", "Alexandria city"))
+      filter(NAME %in% c("Fairfax", "Loudoun", "Arlington", "Alexandria")),
+    counties(state = "DC", cb = TRUE, class = "sf")
+  )
+
+# getting the text ceteroids of every county
+surrounding_centroids <- surrounding_counties %>%
+  st_centroid() %>% 
+  mutate(NAME = ifelse(NAME == "District of Columbia", "DC",
+                ifelse(NAME == "Prince George's", "Prince \nGeorge's", 
+                ifelse(NAME == "Fairfax" & GEOID == 51059, "Fairfax", NAME)))) %>% 
+  filter(!NAMELSAD %in% c("Arlington County", "Alexandria city", "Fairfax city", "Montgomery County"))
+
+montgomery_centeroids <- moco_tracts %>% 
+  st_centroid()
+```
+
+```{r blank-graphs, include=FALSE, echo=FALSE, eval=FALSE}
+ggplot() +   #blank map of county
+  geom_sf(data = moco_tracts, color="black",
+          fill="white", size=1)
+
+ggplot() +   #blank map of county and surrounding counties
+  geom_sf(data = surrounding_counties, fill = "grey", color = "black", size = 1) +
+  geom_sf(data = moco_tracts, color="black", fill="white", size=1) +
+  geom_sf_text(data = surrounding_centroids, aes(label = NAME), size = 2.5, color = "black", fontface = "bold") +
+  theme_nothing()
+
+# Zoomed Map with Montgomery County and Surrounding Counties
+zoomed_map <- ggplot() +
+  geom_sf(data = surrounding_counties, fill = "grey", color = "black", size = 0.5) +
+  #geom_sf(data = moco_tracts, color = "black", fill = "white", size = 0.5) +
+  geom_sf_text(data = surrounding_centroids, aes(label = NAME), size = 2.5, color = "black", fontface = "bold") +
+  theme_nothing()
+
+# Main Map for Montgomery County tracts
+main_map <- ggplot() +
+  geom_sf(data = moco_tracts, color = "black", fill = "white", size = 0.5) +
+  # geom_sf_text(data = montgomery_centeroids, aes(label = NAMELSAD), size = 2.5, color = "black", fontface = "bold") +
+  theme_minimal() +
+  theme(axis.text = element_blank(), 
+        axis.title = element_blank(), 
+        panel.grid = element_blank())
+
+# Combine the two maps using cowplot
+combined_map <- ggdraw() +
+  draw_plot(main_map, -0.15, 0, 1, 1) +  # Main map takes full space
+  draw_plot(zoomed_map, 0.6, 0.15, 0.4, 0.4) +  # Zoomed map is inset at the bottom right
+  geom_segment(aes(x = 0.81, y = 0.35, xend = 0.585, yend = 0.95), 
+               color = "black") +
+  geom_segment(aes(x = 0.81, y = 0.35, xend = 0.585, yend = 0.05), 
+               color = "black") +
+  geom_rect(aes(xmin = 0.115, xmax = 0.585, ymin = 0.05, ymax = 0.95), color = "blue", fill = NA)+
+  theme_void() + #reenter theme - remember order matters, each line stacks on top of the one before. Think like a stack of pancakes
+  labs(#color = "none"
+       #fill = "none"
+       title = "Blank Map of Montgomery County", 
+       subtitle = "By Election District", 
+       caption = "Based on data from the American Community Survey in 2022") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        plot.subtitle = element_text(hjust = 0.5, size = 15), 
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 10), 
+        plot.caption = element_text(hjust = 1, size = 10))
+
+
+# Display the combined map
+combined_map
+
+```
+
+```{r census-data, include=FALSE, echo=FALSE}
+# Montgomery county core variables
+moco_vars <- get_acs(geography = "tract", 
+                    variables = c(totalpop = "S0101_C01_001E", 
+                                  medianage = "S0101_C01_032E",
+                                  medianrent = "DP04_0134E",
+                                  pctfemale = "DP05_0003PE",
+                                  totalwhitepop = "S0601_C01_014E",
+                                  totalblackpop = "S0601_C01_015E",
+                                  totalhispanicpop = "S0601_C01_021E",
+                                  totallessHS = "S0601_C01_033E",
+                                  totalHSgrad = "S0601_C01_034E",
+                                  totalbachgrad = "S0601_C01_036E",
+                                  totalbelow100poverty = "S0601_C01_049E",
+                                  total100to149poverty = "S0601_C01_050E",
+                                  pctbelowpoverty = "S1701_C03_001E",
+                                  pctbelowpovunemployed = "S1701_C03_031E",
+                                  unemploymentrate = "S2301_C04_001E",
+                                  pctnonmovers = "DP02_0080PE",
+                                  pctrecentmovers = "DP02_0084PE",
+                                  meantravelwork = "S0801_C01_046E",
+                                  totalschoolenrollment = "DP02_0053E",
+                                  totalelemschoolenroll = "DP02_0056E",
+                                  totalhighschoolenroll = "DP02_0057E",
+                                  totalhousholds = "S1101_C01_009E",
+                                  totalownerunits = "S1101_C01_018E",
+                                  totalrenterunits = "S1101_C01_019E",
+                                  totaluniversitygrad = "S1501_C01_015E",
+                                  meanincome = "S1901_C01_013E",
+                                  medianincome = "DP03_0062E",
+                                  totalnoinsurance = "DP03_0099E",
+                                  institutionalized = "S2601A_C03_001E"
+                                  ), 
+                    state = "Maryland",
+                    county = "Montgomery",
+                    year = 2022)
+
+moco_vars <- moco_vars[-c(2,5)] #removing margin of error column
+moco_vars <- moco_vars %>% 
+                pivot_wider(names_from = variable, 
+                            values_from = estimate)
+
+# Combining MOCO geographies and variables
+moco <- moco_tracts %>% 
+                select(GEOID, NAME, geometry) %>% 
+                left_join(x = ., y = moco_vars, by = "GEOID")
+
+# changing column names #
+colnames(moco)[colnames(moco) == 'NAME'] <- 'subdivision'
+moco$subdivision <- as.numeric(moco$subdivision)
+colnames(moco)[colnames(moco) == 'S0101_C01_001'] <- 'totalpop'
+colnames(moco)[colnames(moco) == 'S0101_C02_022'] <- 'under18'
+colnames(moco)[colnames(moco) == 'S0101_C02_030'] <- 'over65'
+colnames(moco)[colnames(moco) == 'S0101_C01_032'] <- 'medianage'
+colnames(moco)[colnames(moco) == 'S0101_C01_033'] <- 'sexratio'
+colnames(moco)[colnames(moco) == 'DP05_0003P'] <- 'pctfemale'
+colnames(moco)[colnames(moco) == 'S0601_C01_014'] <- 'totalwhitepop'
+colnames(moco)[colnames(moco) == 'S0601_C01_015'] <- 'totalblackpop'
+colnames(moco)[colnames(moco) == 'S0601_C01_021'] <- 'totalhispanicpop'
+colnames(moco)[colnames(moco) == 'S0601_C01_033'] <- 'totallessHS'
+colnames(moco)[colnames(moco) == 'S0601_C01_034'] <- 'totalHSgrad'
+colnames(moco)[colnames(moco) == 'S0601_C01_036'] <- 'totalbachgrad'
+colnames(moco)[colnames(moco) == 'S0601_C01_049'] <- 'totalbelow100poverty'
+colnames(moco)[colnames(moco) == 'S0601_C01_050'] <- 'total100to149poverty'
+colnames(moco)[colnames(moco) == 'S1701_C03_001'] <- 'pctbelowpoverty'
+colnames(moco)[colnames(moco) == 'S1701_C03_006'] <- 'pctbelowpov18to64'
+colnames(moco)[colnames(moco) == 'S1701_C03_012'] <- 'pctbelowpovfemale'
+colnames(moco)[colnames(moco) == 'S1701_C03_014'] <- 'pctbelowpovblack'
+colnames(moco)[colnames(moco) == 'S1701_C03_033'] <- 'pctbelowpovunemployedfemale'
+colnames(moco)[colnames(moco) == 'S1701_C03_032'] <- 'pctbelowpovunemployedmale'
+colnames(moco)[colnames(moco) == 'S1701_C03_040'] <- 'pctbelow150poverty'
+colnames(moco)[colnames(moco) == 'DP02_0080P'] <- 'pctnonmovers'
+colnames(moco)[colnames(moco) == 'DP02_0084P'] <- 'pctrecentmovers'
+colnames(moco)[colnames(moco) == 'S0801_C01_002'] <- 'totalcartranport'
+colnames(moco)[colnames(moco) == 'S0801_C01_009'] <- 'totalpublictransport'
+colnames(moco)[colnames(moco) == 'S0801_C01_010'] <- 'totalwalktransport'
+colnames(moco)[colnames(moco) == 'S0801_C01_046'] <- 'meantravelwork'
+colnames(moco)[colnames(moco) == 'S0801_C01_013'] <- 'totalwrkfrmhome'
+colnames(moco)[colnames(moco) == 'S0801_C01_016'] <- 'totalwrkoutsidecounty'
+colnames(moco)[colnames(moco) == 'S0801_C01_015'] <- 'totalwrkincounty'
+colnames(moco)[colnames(moco) == 'S0802_C01_061'] <- 'totalarmedforces'
+colnames(moco)[colnames(moco) == 'S0901_C01_024'] <- 'totalchildreninhouseholds'
+colnames(moco)[colnames(moco) == 'DP02_0053'] <- 'totalschoolenrollement'
+colnames(moco)[colnames(moco) == 'DP02_0056'] <- 'totalelemschoolenroll'
+colnames(moco)[colnames(moco) == 'DP02_0057'] <- 'totalhighschoolenroll'
+colnames(moco)[colnames(moco) == 'S0901_C01_026'] <- 'totalpublicschool'
+colnames(moco)[colnames(moco) == 'S0901_C01_027'] <- 'totalprivateschool'
+colnames(moco)[colnames(moco) == 'S0902_C01_001'] <- 'totalpop15to19'
+colnames(moco)[colnames(moco) == 'S0902_C01_005'] <- 'total15to19noschoolenroll'
+colnames(moco)[colnames(moco) == 'S0902_C01_003'] <- 'total15to19publicschoolenroll'
+colnames(moco)[colnames(moco) == 'DP02_0041'] <- 'totalteenbirths'
+colnames(moco)[colnames(moco) == 'S1101_C01_009'] <- 'totalhousholds'
+colnames(moco)[colnames(moco) == 'S1101_C01_018'] <- 'totalownerunits'
+colnames(moco)[colnames(moco) == 'S1101_C01_019'] <- 'totalrenterunits'
+colnames(moco)[colnames(moco) == 'S1301_C02_023'] <- 'totalnewmomsbelowpoverty'
+colnames(moco)[colnames(moco) == 'S1301_C02_024'] <- 'totalnewmomspoverty100to199'
+colnames(moco)[colnames(moco) == 'S1301_C03_029'] <- 'pctnewmomspublicassist'
+colnames(moco)[colnames(moco) == 'S1301_C03_023'] <- 'pctnewmomsbelowpoverty'
+colnames(moco)[colnames(moco) == 'S1301_C03_024'] <- 'pctnewmomspoverty100to199'
+colnames(moco)[colnames(moco) == 'S1501_C02_036'] <- 'totaluniversitygrad'
+colnames(moco)[colnames(moco) == 'S1501_C05_006'] <- 'totalfemale25older'
+colnames(moco)[colnames(moco) == 'S1501_C05_008'] <- 'totalfemalelessthanHS'
+colnames(moco)[colnames(moco) == 'S1501_C05_009'] <- 'totalfemaleHSgrad'
+colnames(moco)[colnames(moco) == 'S1501_C05_015'] <- 'totalfemaleuniversitygrad'
+colnames(moco)[colnames(moco) == 'S1810_C01_041'] <- 'totalcognitivedisable18to64'
+colnames(moco)[colnames(moco) == 'S1810_C01_040'] <- 'totalcognitivedisableunder18'
+colnames(moco)[colnames(moco) == 'S1810_C01_044'] <- 'totalcognitivedisableover65'
+colnames(moco)[colnames(moco) == 'S1810_C01_049'] <- 'totalambulatorydisable18to64'
+colnames(moco)[colnames(moco) == 'S1810_C01_048'] <- 'totalambulatorydisableunder18'
+colnames(moco)[colnames(moco) == 'S1810_C01_052'] <- 'totalambulatorydisableover65'
+colnames(moco)[colnames(moco) == 'S1901_C01_013'] <- 'meanincome'
+colnames(moco)[colnames(moco) == 'DP03_0062'] <- 'medianincome'
+colnames(moco)[colnames(moco) == 'S1902_C01_020'] <- 'percapitaincomewhite'
+colnames(moco)[colnames(moco) == 'S1902_C01_021'] <- 'percapitaincomeblack'
+colnames(moco)[colnames(moco) == 'S1902_C02_008'] <- 'pctpublicassistance'
+colnames(moco)[colnames(moco) == 'DP03_0099'] <- 'totalnoinsurance'
+colnames(moco)[colnames(moco) == 'DP04_0134'] <- 'medianrent'
+colnames(moco)[colnames(moco) == 'DP02_0097'] <- 'totalnotcitizen'
+colnames(moco)[colnames(moco) == 'S2301_C04_001'] <- 'unemploymentrate'
+colnames(moco)[colnames(moco) == 'S2601A_C03_001'] <- 'institutionalized'
+colnames(moco)[colnames(moco) == 'S1701_C03_031'] <- 'pctbelowpovunemployed'
+colnames(moco)[colnames(moco) == 'S1501_C01_015'] <- 'totaluniversitygrad'
+```
+
+```{r life-expectancy, include=FALSE, echo=FALSE}
+
+life_expectancy <- read_csv("~/R Studio/Zeta/U.S._Life_Expectancy_at_Birth_by_State_and_Census_Tract_-_2010-2015.csv") %>% 
+  filter(County %in% "Montgomery County, MD") %>%  
+  select(3,4)  
+
+moco_tracts <- tracts(state = "Maryland", county = "Montgomery", cb = TRUE, class = "sf") #Census tracts are small, relatively permanent statistical subdivisions of the County from the U.S. Census Bureau. 
+
+moco_centroids <- moco_tracts %>% 
+  st_centroid() 
+  
+life_tracts <- left_join(life_expectancy, moco_centroids, by = c("Census Tract Number" = "NAME"))
+life_tracts <- life_tracts %>%
+  filter(!is.na(GEOID) & !is.na(`Life Expectancy`))
+
+life_tracts <- life_tracts %>%
+  mutate(
+    long = st_coordinates(geometry)[, 1],  # Extract longitude
+    lat = st_coordinates(geometry)[, 2] )
+
+life_sf <- life_tracts %>%
+  st_as_sf(coords = c("long", "lat"), crs = 4269)
+
+life_with_subdivisions <- st_join(life_sf, moco_tracts) %>% 
+  select(`Life Expectancy`, NAME) %>% 
+  group_by(NAME) %>%  
+  summarise(AvgLifeExpectancy = round(mean(`Life Expectancy`), 2)) %>%  
+  ungroup() %>% 
+  st_drop_geometry(life_with_subdivisions)
+
+life_with_subdivisions$NAME <- as.numeric(life_with_subdivisions$NAME)
+moco <- moco %>% 
+  left_join(x = ., y = life_with_subdivisions, by = c("subdivision" = "NAME"))
+
+```
+
+```{r Health-Human-Services-Facilities, include=FALSE, echo=FALSE}
+hhs_df <- read.csv("~/R Studio/ZetaData/Health_and_Human_Services_Facilities_List.csv") %>% 
+              select(-c(X24.Hour.Emergency.Phone.Number, Link))
+
+#Extract the lat and long onto new variables
+hhs_df$lat <- sub(".*\\(([^,]+),.*", "\\1", hhs_df$New.Georeferenced.Column)
+hhs_df$lat <- as.numeric(hhs_df$lat)
+hhs_df$long <- sub(".*,(.*)\\).*", "\\1", hhs_df$New.Georeferenced.Column)
+hhs_df$long <- as.numeric(hhs_df$long)
+
+hhs_df <- hhs_df %>%
+  filter(!is.na(lat) & !is.na(long)) 
+hhs_df <- hhs_df[!(hhs_df$Building.Name == "Delivered Statewide"), ]
+
+hhs_sf <- hhs_df %>%
+  st_as_sf(coords = c("long", "lat"), crs = 4269)  # Assuming NAD83 (EPSG:4269)
+                                                   # Assuming WGS 84 (EPSG:4326)
+
+# st_crs(moco_tracts) #Check the CRS tract data. hhs data should match this 
+# hhs_sf <- st_transform(hhs_sf, st_crs(moco_tracts)) #to match the crs of moco tract data
+
+hhs_with_tracts <- st_join(hhs_sf, moco_tracts) %>% 
+  select(Building.Name, Program.Name, New.Georeferenced.Column, STATEFP, COUNTYFP, GEOID, NAME)
+
+# write_csv(hhs_with_tracts, "hhs_with_tracts.csv")
+
+tract_hhs_sum <- hhs_with_tracts %>%
+  mutate(hhsfacilities = 1) %>% 
+  group_by(NAME) %>%
+  summarise(hhsfacilities = sum(hhsfacilities, na.rm = TRUE)) %>% 
+  st_drop_geometry(tract_hhs_sum)
+tract_hhs_sum$NAME <- as.numeric(tract_hhs_sum$NAME)
+
+moco <- moco %>% 
+  left_join(x = ., y = tract_hhs_sum, by = c("subdivision" = "NAME"))
+
+```
+
+```{r crime, include=FALSE, echo=FALSE}
+Crime <- read_csv("~/R Studio/Zeta/Crime_20240830.csv") %>% 
+            select(Start_Date_Time, Victims, 'Crime Name2', 'Police District Name', City, State, 'Zip Code', 'Address Number', 'Street Prefix', 'Street Name', 'Street Suffix', 'Street Type', Latitude, Longitude)
+Crime$Date <- year(mdy_hms(Crime$Start_Date_Time))
+Crime <- Crime %>% 
+          select(-Start_Date_Time) 
+
+violent <- Crime %>% 
+  filter(`Crime Name2` %in% c("Aggravated Assault", "Kidnapping/Abduction", "Murder and Nonnegligent Manslaughter", "Negligent Manslaughter", "Simple Assault")) %>% 
+  filter(Latitude > 0) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269)
+theft <- Crime %>% 
+  filter(`Crime Name2` == c("Burglary/Breaking and Entering", "Robbery", "Shoplifting", "All other Larceny", "Theft from Building", "Theft From Motor Vehicle", "Theft of Motor Vehicle Parts or Accessories")) %>% 
+  filter(Latitude > 0) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269)
+vandalism_arson <- Crime %>% 
+  filter(`Crime Name2` == c("Destruction/Damage/Vandalism of Property", "Arson")) %>% 
+  filter(Latitude > 0) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269)
+sexual_assualt <- Crime %>% 
+  filter(`Crime Name2` %in% c("Forcible Sodomy", "Forcible Rape", "Statuory Rape", "Sexual Assault With An Object", "Forcible Fondling")) %>% 
+  filter(Latitude > 0) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269) 
+  
+violent_tracts <- st_join(violent, moco_tracts) %>% 
+  mutate(violent = 1) %>% 
+  group_by(NAME) %>%
+  summarise(violentcrimes = sum(violent, na.rm = TRUE)) %>% 
+  st_drop_geometry(violent_tracts)
+
+theft_tracts <- st_join(theft, moco_tracts) %>% 
+  mutate(theft = 1) %>% 
+  group_by(NAME) %>%
+  summarise(theftcrimes = sum(theft, na.rm = TRUE)) %>% 
+  st_drop_geometry(theft_tracts)
+
+sexual_assualt_tracts <- st_join(sexual_assualt, moco_tracts) %>% 
+  mutate(sexual_assualt = 1) %>% 
+  group_by(NAME) %>%
+  summarise(sexual_assualtcrimes = sum(sexual_assualt, na.rm = TRUE)) %>% 
+  st_drop_geometry(sexual_assualt_tracts)
+
+vandalism_arson_tracts <- st_join(vandalism_arson, moco_tracts) %>% 
+  mutate(vandalism_arson = 1) %>% 
+  group_by(NAME) %>%
+  summarise(vandalism_arsoncrimes = sum(vandalism_arson, na.rm = TRUE)) %>% 
+  st_drop_geometry(vandalism_arson_tracts)
+
+# write_csv(violent_tracts, "violent_tracts.csv")
+# write_csv(theft_tracts, "theft_tracts.csv")
+# write_csv(sexual_assualt_tracts, "sexual_assualt_tracts.csv")
+# write_csv(vandalism_arson_tracts, "vandalism_arson_tracts.csv")
+
+violent_tracts$NAME <- as.numeric(violent_tracts$NAME)
+theft_tracts$NAME <- as.numeric(theft_tracts$NAME)
+sexual_assualt_tracts$NAME <- as.numeric(sexual_assualt_tracts$NAME)
+vandalism_arson_tracts$NAME <- as.numeric(vandalism_arson_tracts$NAME)
+
+moco <- moco %>% 
+  left_join(x = ., y = violent_tracts, by = c("subdivision" = "NAME"))
+moco <- moco %>% 
+  left_join(x = ., y = theft_tracts, by = c("subdivision" = "NAME"))
+moco <- moco %>% 
+  left_join(x = ., y = sexual_assualt_tracts, by = c("subdivision" = "NAME"))
+moco <- moco %>% 
+  left_join(x = ., y = vandalism_arson_tracts, by = c("subdivision" = "NAME"))
+
+```
+
+```{r grocery-stores, include=FALSE, echo=FALSE}
+grocery_stores <-  read.csv("~/R Studio/ZetaData/Grocery_Stores_and_Markets_20241120.csv")
+
+grocery_stores <- grocery_stores %>%
+  filter(!is.na(Latitude) & !is.na(Longitude)) # remove na for spatial dataset
+
+grocery_stores_sf <- grocery_stores %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4269)  # Assuming NAD83 (EPSG:4269)
+                                                  # Assuming WGS 84 (EPSG:4326)
+
+# st_crs(moco_tracts) #Check the CRS tract data. SChool data should match this 
+# schools_sf <- st_transform(schools_sf, st_crs(moco_tracts)) #to match the crs of moco tract data
+
+stores_with_tracts <- st_join(grocery_stores_sf, moco_tracts) %>% 
+  select("Establishment.ID", Name, STATEFP, COUNTYFP, GEOID, NAME)
+
+stores_by_tracts <- stores_with_tracts %>% 
+  group_by(NAME) %>% 
+  mutate(count = 1) %>% 
+  summarize(sum_stores = sum(count)) %>% 
+  ungroup() %>% 
+  st_drop_geometry(stores_by_tracts)
+
+stores_by_tracts$NAME <- as.numeric(stores_by_tracts$NAME)
+
+moco <- moco %>% 
+  left_join(x = ., y = stores_by_tracts, by = c("subdivision" = "NAME"))
+
+```
+
+```{r low-income-schools, include=FALSE, echo=FALSE}
+# Data frame with school names
+schools_df <- read_csv("~/R Studio/ZetaData/FARMS_FY2017_Official_Enrollment_20240829.csv")
+schools_df$Center <- gsub("William B. Gibbs, Jr. ES$", "William B. Gibbs Jr. ES", schools_df$Center)
+schools_df$Center <- gsub("JoAnn Leleck ES$", "Joann Leleck Elementary School at Broad Acres", schools_df$Center)
+schools_df$Center <- gsub("Col\\.", "Colonel", schools_df$Center)
+schools_df$Center <- gsub("Colonel E. Brooke Lee MS$", "Odessa Shannon ES", schools_df$Center)
+schools_df$Center <- gsub("Earle B. Wood MS$", "Earle Wood ES", schools_df$Center)
+schools_df$Center <- gsub("Roberto W. Clemente MS$", "Roberto Clemente MS", schools_df$Center)
+schools_df$Center <- gsub("Roscoe R. Nix ES$", "Roscoe Nix ES", schools_df$Center)
+schools_df$Center <- gsub(" ES$", " Elementary School", schools_df$Center)
+schools_df$Center <- gsub(" MS$", " Middle School", schools_df$Center)
+schools_df$Center <- gsub(" HS$", " High School", schools_df$Center)
+schools_df <- schools_df[!(schools_df$Center == "Grand Total"), ]
+schools_df <- schools_df[!(schools_df$Center == "Alternative Programs"), ]
+schools_df$full <- paste(schools_df$Center, "Montgomery County", "MD", sep = ", ")
+
+
+# Geocode the school names
+# schools_df <- schools_df %>%
+#   geocode(address = Center, method = 'osm')  # Using OpenStreetMap
+
+# register_google(Sys.getenv("GOOGLE_API_KEY"))
+schools_df <- schools_df %>%
+  mutate(geocode_result = map(full, ~ geocode(.x))) %>%
+  unnest(cols = c(geocode_result)) # using google maps API
+
+#write_csv(schools_df, "schools_df.csv") #manually input the lat longs NA lat longs
+
+#Convert School cords to spatial datframe and spatial join tracts data
+schools_df <- schools_df %>%
+  filter(!is.na(lat) & !is.na(lon)) # remove na for spatial dataset
+
+schools_sf <- schools_df %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4269)  # Assuming NAD83 (EPSG:4269)
+                                                  # Assuming WGS 84 (EPSG:4326)
+
+# st_crs(moco_subdivisions) #Check the CRS tract data. SChool data should match this 
+# schools_sf <- st_transform(schools_sf, st_crs(moco_subdivisions)) #to match the crs of moco tract data
+
+schools_with_tracts <- st_join(schools_sf, moco_tracts) %>% 
+  select(Center, 'Sum of FARMS', STATEFP, COUNTYFP, GEOID, NAME)
+
+# write_csv(schools_with_tracts, "school_with_tracts.csv")
+
+tract_farms_sum <- schools_with_tracts %>%
+  group_by(NAME) %>%
+  summarise(freelunch = sum(`Sum of FARMS`, na.rm = TRUE)) %>% 
+  st_drop_geometry(tract_farms_sum)
+tract_farms_sum$NAME <- as.numeric(tract_farms_sum$NAME)
+  
+moco <- moco %>% 
+  left_join(x = ., y = tract_farms_sum, by = c("subdivision" = "NAME"))
+
+```
+
+```{r walkability, include=FALSE, echo=FALSE}
+moco_tracts <- tracts(state = "Maryland", county = "Montgomery", cb = TRUE, class = "sf") %>% 
+  mutate(TRACTCE = as.character(TRACTCE)) %>% 
+  mutate(STATEFP = as.character(STATEFP)) %>% 
+  mutate(COUNTYFP = as.character(COUNTYFP)) 
+
+walkability <- read.csv("~/R Studio/Zeta/EPA_SmartLocationDatabase_V3_Jan_2021_Final.csv") %>% 
+  select(c("STATEFP", "COUNTYFP", "TRACTCE", "NatWalkInd")) %>%
+  filter(STATEFP == 24 & COUNTYFP == 31) %>% 
+  mutate(TRACTCE = as.character(TRACTCE)) %>% 
+  mutate(STATEFP = as.character(STATEFP)) %>% 
+  mutate(COUNTYFP = as.character(COUNTYFP)) %>% 
+  filter(TRACTCE %in% moco_tracts$TRACTCE) %>% 
+  mutate(COUNTYFP = str_pad(COUNTYFP, width = 3, side = "left", pad = "0"))
+
+walk_tracts <- left_join(walkability, moco_centroids, by = c("TRACTCE", "STATEFP", "COUNTYFP"))
+
+walk_tracts <- walk_tracts %>%
+  mutate(
+    long = st_coordinates(geometry)[, 1],  # Extract longitude
+    lat = st_coordinates(geometry)[, 2] )
+
+walk_sf <- walk_tracts %>%
+  st_as_sf(coords = c("long", "lat"), crs = 4269)
+
+walk_with_subdivisions <- st_join(walk_sf, moco_tracts) %>% 
+  select(NatWalkInd, NAME.y) %>% 
+  group_by(NAME.y) %>%  
+  summarise(AvgNatWalkInd = round(mean(NatWalkInd), 2)) %>%  
+  ungroup() %>% 
+  st_drop_geometry(walk_with_subdivisions)
+
+walk_with_subdivisions$NAME.y <- as.numeric(walk_with_subdivisions$NAME.y)
+moco <- moco %>% 
+  left_join(x = ., y = walk_with_subdivisions, by = c("subdivision" = "NAME.y"))
+
+```
+
+```{r cluster-cleaning, include=FALSE, echo=FALSE}
+moco_clusters <- moco %>% 
+  select(11:13, 14:21, 23:25, 27, 29, 32:40) %>% 
+  st_drop_geometry(moco)
+
+moco_clusters[is.na(moco_clusters)] <- 0
+moco_clusters[] <- lapply(moco_clusters, as.numeric)
+```
+
+```{r optimal-number-clusters, include=FALSE, echo=FALSE}
+fviz_nbclust(moco_clusters, #data set we want to use
+             kmeans, #cluster method
+             method = "wss", #method used for estimating the optimal number of clusters
+             k.max = 25)
+```
+
+```{r cluster-analysis, include=FALSE, echo=FALSE}
+k_moco <- kmeans(moco_clusters, 8) # Eight (8) clusters is optimal
+moco$cluster <- k_moco$cluster
+
+```
+
+```{r graph-function, include=FALSE, echo=FALSE}
+moco_fill_graphs_c <- function(data, column, fill_label){ 
+# Main Map for Montgomery County tracts
+main_map <- ggplot(data, aes(fill = column)) +
+  geom_sf(size=0.25) +
+  geom_sf() +
+  #geom_sf(data = moco_tracts, color = "black", fill = "white", size = 0.5) +
+  #geom_sf_text(data = montgomery_centeroids, aes(label = NAMELSAD), size = 3, color = "black") +
+  theme_minimal() +
+    scale_fill_gradientn(colors = c("#E3F2FD", "#BBDEFB", "#90CAF9", "#64B5F6", "#42A5F5", "#2196F3", "#1E88E5", "#1976D2", "#1565C0", "#0D47A1")) +
+  #scale_fill_viridis_d(option = "magma") +
+  theme(axis.text.x = element_blank(), 
+        axis.text.y = element_blank(), 
+        axis.ticks = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.title.y = element_blank(), 
+        panel.grid = element_blank(), 
+        legend.position = "bottom", 
+        legend.key.size = unit(0.9, 'cm'), 
+        legend.key.width = unit(3, 'cm'))+
+  labs(fill = fill_label)
+
+# Combine the two maps using cowplot
+combined_map <- ggdraw() +
+  draw_plot(main_map, -0.15, 0, 1, 1) +  # Main map takes full space
+  theme_void() + #reenter theme - remember order matters, each line stacks on top of the one before. Think like a stack of pancakes
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        plot.subtitle = element_text(hjust = 0.5, size = 15), 
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 10), 
+        plot.caption = element_text(hjust = 0.98, size = 10))
+}
+
+moco_fill_graphs_d <- function(data, column, fill_label){ 
+# Main Map for Montgomery County tracts
+main_map <- ggplot(data, aes(fill = column)) +
+  geom_sf(size=0.25) +
+  geom_sf() +
+  #geom_sf(data = moco_tracts, color = "black", fill = "white", size = 0.5) +
+  #geom_sf_text(data = montgomery_centeroids, aes(label = NAMELSAD), size = 3, color = "black") +
+  theme_minimal() +
+    # scale_fill_gradientn(colors = c("#E3F2FD", "#BBDEFB", "#90CAF9", "#64B5F6", "#42A5F5", "#2196F3", "#1E88E5", "#1976D2", "#1565C0", "#0D47A1")) +
+  scale_fill_viridis_d(option = "magma") +
+  theme(axis.text.x = element_blank(), 
+        axis.text.y = element_blank(), 
+        axis.ticks = element_blank(), 
+        axis.title.x = element_blank(), 
+        axis.title.y = element_blank(), 
+        panel.grid = element_blank(), 
+        legend.position = "bottom", 
+        legend.key.size = unit(0.9, 'cm'), 
+        legend.key.width = unit(3, 'cm'))+
+  labs(fill = fill_label)
+
+# Combine the two maps using cowplot
+combined_map <- ggdraw() +
+  draw_plot(main_map, -0.15, 0, 1, 1) +  # Main map takes full space
+  theme_void() + #reenter theme - remember order matters, each line stacks on top of the one before. Think like a stack of pancakes
+  theme(plot.title = element_text(hjust = 0.5, size = 20), 
+        plot.subtitle = element_text(hjust = 0.5, size = 15), 
+        legend.text = element_text(size = 8), 
+        legend.title = element_text(size = 10), 
+        plot.caption = element_text(hjust = 0.98, size = 10))
+}
+```
+
+## Introduction
+
+For this paper, I intend to accomplish two things: 1) determine the overall health of Montgomery County, Maryland and 2) compare the health status of the different Census tracts of Montgomery County, Maryland. I employ the U.S. Department of Health and Human Services' five (5) social determinant groups of health. The social determinant groups are economic stability, education access and quality, health care access and quality, neighborhood and built environment, & social and community context. Within these groups are a number of variables which will be explained in great detail below. To compare the tracts, I will create eight (8) k-means clusters of the Census tracts and analyze the clusters, both demographically and based on the social determinants of health factors. The total within sum of square method was used to determine the optimal number of clusters for this model.
+
+## Data
+
+For this study, I combine multiple datasets from two sources: 1) the 2022 U.S. American Community Survey (ACS) and 2) Montgomery County, Maryland Open Data Portal. The combined data set had 232 observations where every observation is a census tract. Census tracts are small, relatively permanent statistical subdivisions of the County from the U.S. Census Bureau. According to the the U.S. Census Bureau, each area contains approximately 4,000 people of relatively homogeneous characteristics with respect to population, economic status and living conditions. Census tracts provide a stable set of geographic units for the presentation of decennial census data over the decades and are only occasionally split to reflect population growth. The model estimated that eight (8) clusters was optimal using the the total within sum of squares method.
+
+The dataset had 42 variables that represent both demographic and social determinants of health based on standards set by U.S. Human and Health Services. According to the U.S. Human and Health Services, social determinants of health (SDOH) are the conditions in the environments where people are born, live, learn, work, play, worship, and age that affect a wide range of health, functioning, and quality-of-life outcomes and risks. Social determinants of health also contribute to wide health disparities and inequities. Variables on employment, number of grocery stores, housing insecurity, and poverty are used to represent economic stability. Variables on early childhood development and poverty, enrollment in higher education, high school graduation are used to represent education access and quality. Variables on the number of HHS facilities are used to represent health care access and quality. Variables on number of grocery stores, amount of crimes, and neighborhood walk score are used to represent neighborhood and built environment. There were no variables used to represent social and community context. All of the variables are numeric variables except for the GEOID variable. There is also a geometry variable for graphing purposes.
+
+## Analysis
+
+```{r graphs, echo=FALSE, warning=FALSE}
+moco_fill_graphs_d(moco, as.factor(moco$cluster), "Clusters") +
+  labs(title = "K Means Clusters \nin Montgomery County", 
+       subtitle = "By Census Tracts", 
+       caption = "Based on data from the American Community Survey in 2022 \nand data from Montgomery County Open Data Portal")
+```
+
+As we can see from the above graphs, the are a few clusters that seem to be sectioned to one part of the county. For example, clusters one (1), six (6), and eight (8) seems to only be in the bottom part of the county. Further, cluster five (5) seems to be portioned mostly in the center part of the county. The mean demographics of the clusters themselves are interesting.
+
+```{r demo-summary, echo=FALSE}
+demo_cluster_summary <- moco %>%
+  group_by(cluster) %>%
+  summarise(
+    mean_pop = mean(totalpop, na.rm = TRUE),
+    mean_whipop = mean(totalwhitepop, na.rm = TRUE),
+    mean_blkpop = mean(totalblackpop, na.rm = TRUE),
+    mean_hispop = mean(totalhispanicpop, na.rm = TRUE),
+    mean_income = mean(meanincome, na.rm = TRUE), 
+    mean_age = mean(medianage, na.rm = TRUE)
+  ) %>% 
+  st_drop_geometry(moco)
+
+demo_cluster_summary
+```
+
+Cluster 8 has a significantly high white population, high mean income, high mean life expectancy and low poverty. On the other hand, cluster 5 has a significantly high minority population, high unemployment, high poverty, and low life expectancy. Clusters 1, 6, and 7 are on the high end for white population and low minority population. Unemployment rate is similar across the clusters, with the exception of clusters 5 and 8, the unemployment rate are around 3 and 4. The mean income across the clusters range from \$101,000 and \$493,000. The average age is also pretty similar across all the clusters with a range of 37 and 49 years old. Interestingly, cluster 5 is the "youngest" cluster whereas cluster 8 is the "oldest".
+
+```{r sdh-summary, echo=FALSE}
+sdh_cluster_summary <- moco %>%
+  group_by(cluster) %>%
+  summarise(
+    mean_travelwrk = mean(meantravelwork, na.rm = TRUE),
+    own_rent_rto = mean(totalownerunits)/mean(totalrenterunits),
+    mean_unigrad = mean(totaluniversitygrad, na.rm = TRUE),
+    mean_schoolenroll = mean(totalschoolenrollement, na.rm = TRUE),
+    mean_noinsure = mean(totalnoinsurance, na.rm = TRUE),
+    mean_unemploy = mean(unemploymentrate, na.rm = TRUE),
+    mean_violent = mean(violentcrimes, na.rm = TRUE),
+    mean_poverty = mean(totalbelow100poverty, na.rm = TRUE),
+    mean_lifeexpectancy = mean(AvgLifeExpectancy, na.rm = TRUE), 
+    mean_grocery = mean(sum_stores, na.rm = TRUE)
+  ) %>% 
+  st_drop_geometry(moco)
+
+sdh_cluster_summary
+```
+
+As for the social determinants of health, we see a similar trend. Cluster 8 is an all around wealthy and healthy cluster. Their own to rent ratio is significantly higher than than the other clusters. Their population with no insurance is low and their number of violent crimes is low. As for cluster 5, we see the complete opposite. Their no-insurance population is the highest amongst all of the clusters. There violent crime rate is also extremely high compared to the other clusters. Based on these findings and the standards set by HHS, this cluster would be deemed unhealthy. Interestingly, amongst all of the clusters, the university graduate population rate is similar. The own to rent ratio between the clusters are also starkingly different. With the exception of cluster eight (8), child age school enrollment is similar.
+
+## Conclusion
+
+Based on these findings and the standards set by HHS, comparatively, clusters 1, 6, 7, and 8 are the healthiest clusters in Montgomery county. On the other side, clusters 2, 3, 4, and 5 are the least healthy. This means that representatives and local officials from representing clusters 2, 3, 4, and 5 to consider programming that may improve social conditions, with the goal of improving health outcomes.

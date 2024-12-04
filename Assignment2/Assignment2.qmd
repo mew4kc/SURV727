@@ -1,0 +1,299 @@
+---
+title: "Assignment 2"
+format: html
+editor: visual
+---
+
+```{r, include = FALSE}
+rm(list = ls())
+setwd("~/R Studio/SURV727")
+library(tidyverse)
+library(gtrendsR)
+#library(censusapi)
+library(tidycensus)
+library(dplyr)
+Sys.getenv("CENSUS_API_KEY")
+```
+
+```{r, include = FALSE}
+res <- gtrends(c("crime", "loans"),
+geo = "US-IL",
+time = "2020-01-01 2020-12-31",
+low_search_volume = TRUE)
+```
+
+**Find the mean, median and variance of the search hits for the keywords, crime and loans.**
+
+```{r, echo = FALSE}
+plot(res)
+```
+
+```{r, echo=FALSE}
+summary(res[[5]]$hits)
+```
+
+For the terms crime and loans, the mean of search hits is 60.4. The median is 58. The range is 45 to 100.
+
+**Which cities (locations) have the highest search frequency for loans? Note that there might be multiple rows for each city if there were hits for both “crime” and “loans” in that city. It might be easier to answer this question if we had the search hits info for both search terms in two separate variables. That is, each row would represent a unique city.**
+
+```{r, include=FALSE}
+crime_list <- subset(res[[5]], keyword == "crime" & !is.na(hits))
+loans_list <- subset(res[[5]], keyword == "loans" & !is.na(hits))
+```
+
+```{r, echo=FALSE}
+summary(crime_list$hits)
+```
+
+The mean of search hits for crime is 65.81. The median is 62. The range is 57 to 100. The city of Anna has the highest search frequency of 100.
+
+```{r, echo=FALSE}
+summary(loans_list$hits)
+```
+
+The mean of search hits for loans is 55.75. The median is 53. The range is 45 to 100. The city of Long Lake has the highest search frequency of 100.
+
+**Repeat the above for keywords related to covid.**
+
+I chose the words "masks", "vaccine" and "quarantine"
+
+```{r, include = FALSE}
+res2 <- gtrends(c("masks", "vaccine", "quarantine"),
+geo = "US-FL",
+time = "2020-06-01 2020-11-30",
+low_search_volume = TRUE)
+```
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+plot(res2)
+```
+
+```{r, echo=FALSE}
+summary(res2[[5]]$hits)
+```
+
+For the terms masks, vaccine, and quarantine. The mean of search hits is 83.24. The median is 86. The range is 61 to 100.
+
+```{r, include=FALSE}
+masks_list <- subset(res2[[5]], keyword == "masks" & !is.na(hits))
+vaccine_list <- subset(res2[[5]], keyword == "vaccine" & !is.na(hits))
+quarantine_list <- subset(res2[[5]], keyword == "quarantine" & !is.na(hits))
+
+```
+
+```{r, echo=FALSE}
+summary(masks_list$hits)
+```
+
+The mean of search hits for masks is 92.12. The median is 93. The range is 82 to 100. The city of Hamptons at Boca Raton has the highest search frequency of 100.
+
+```{r, echo=FALSE}
+summary(vaccine_list$hits)
+```
+
+The mean of search hits for vaccine is 86.17. The median is 86.5. The range is 77 to 100. The city of Southlake Ranches has the highest search frequency of 100.
+
+```{r, echo=FALSE}
+summary(quarantine_list$hits)
+```
+
+The mean of search hits for quarantine is 70.57. The median is 65. The range is 61 to 100. The city of Bay Lake has the highest search frequency of 100.
+
+## ACS
+
+```{r, include=FALSE}
+acs_il <- get_acs(geography = "place", 
+                    variables = c("NAME",
+                                  "B01001_001E",
+                                  "B06002_001E",
+                                  "B19013_001E",
+                                  "B19301_001E"
+                                  ), 
+                    state = "Illinois",
+                    year = 2020)
+acs_il <- select(acs_il, -moe)
+acs_il[acs_il == -666666666] <- NA
+
+acs_il <- pivot_wider(acs_il, names_from = "variable", 
+                      values_from = "estimate")
+
+acs_il <-
+acs_il %>%
+rename(pop = B01001_001,
+age = B06002_001,
+hh_income = B19013_001,
+income = B19301_001)
+
+acs_il$location <- str_extract(acs_il$NAME, "^[^,]+")
+acs_il$location <- str_replace(acs_il$location, "\\s*(CDP|village|City|town)", "")
+```
+
+```{r, include=FALSE}
+gtrends_il <- pivot_wider(res[["interest_by_city"]], 
+            names_from = "keyword", 
+            values_from = "hits")
+
+gtrends_il <- subset(gtrends_il, !is.na(crime) | !is.na(loans))
+
+join <- inner_join(acs_il, gtrends_il, by = join_by(location)) %>% 
+             select(, -c(geo, gprop)) 
+```
+
+
+```{r, echo=FALSE}
+head(join)
+```
+
+**Compute the mean of the search popularity for both keywords for cities that have an above average median household income and for those that have an below average median household income. When building your pipe, start with creating the grouping variable and then proceed with the remaining tasks. What conclusions might you draw from this?**
+
+```{r, include = FALSE}
+meani <- mean(join$income) 
+high <- subset(join, join$income >= meani)
+low <- subset (join, join$income < meani)
+```
+
+```{r, echo=FALSE}
+summary(high$crime)
+```
+
+```{r, echo=FALSE}
+summary(low$crime)
+```
+
+There is not much of a difference in crime search popularity between locations with above and below average median income.
+
+```{r, echo=FALSE}
+summary(high$loans)
+```
+
+```{r, echo=FALSE}
+summary(low$loans)
+```
+
+There is a slight difference in loans search popularity between locations with above and below average median income. On average, places with below average median income are searching loans more often than places with above average median income.
+
+**Is there a relationship between the median household income and the search popularity of the Google trends terms?**
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+options(scipen = 5)
+qplot(join$hh_income, join$crime, xlab = "household income",  ylab = "crime")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+options(scipen = 5)
+qplot(join$hh_income, join$loans, xlab = "household income",  ylab = "loans")
+```
+
+```{r, echo=FALSE}
+summary(lm(loans ~ hh_income, data = join))
+```
+
+
+There doesn't appear to be a relationship between household income and crime search popularity. There does appear to be a relationship between household income and loans search popularity. However, upon deeper digging there is no linear relationship between loans and household income. 
+
+**Repeat the above for keywords related to covid.**
+
+```{r, include=FALSE}
+acs_il2 <- get_acs(geography = "place", 
+                    variables = c("NAME",
+                                  "B01001_001E",
+                                  "B06002_001E",
+                                  "B19013_001E",
+                                  "B19301_001E"
+                                  ), 
+                    state = "Florida",
+                    year = 2020)
+acs_il2 <- select(acs_il2, -moe)
+acs_il2[acs_il2 == -666666666] <- NA
+
+acs_il2 <- pivot_wider(acs_il2, names_from = "variable", 
+                      values_from = "estimate")
+
+acs_il2 <-
+acs_il2 %>%
+rename(pop = B01001_001,
+age = B06002_001,
+hh_income = B19013_001,
+income = B19301_001)
+
+acs_il2$location <- str_extract(acs_il2$NAME, "^[^,]+")
+acs_il2$location <- str_replace(acs_il2$location, "\\s*(CDP|village|City|town)", "")
+```
+
+```{r, include=FALSE}
+res2_unique <- distinct(res2[[5]])  #removes any duplicates
+
+gtrends_il2 <- pivot_wider(res2_unique, 
+            names_from = "keyword", 
+            values_from = "hits")
+
+gtrends_il2 <- subset(gtrends_il2, !is.na(masks) | !is.na(vaccine) | !is.na(quarantine))
+
+join2 <- inner_join(acs_il2, gtrends_il2, by = join_by(location)) 
+```
+
+
+```{r, echo=FALSE}
+head(join2)
+```
+
+```{r, include = FALSE}
+meani2 <- mean(join2$income) 
+high2 <- subset(join2, join2$income >= meani2)
+low2 <- subset (join2, join2$income < meani2)
+```
+
+```{r, echo=FALSE}
+summary(high2$masks)
+```
+
+```{r, echo=FALSE}
+summary(low2$masks)
+```
+
+There appears to be a difference between mask search popularity. It appears that people with above average median income searched masks more often than those with below average median income.
+
+```{r, echo=FALSE}
+summary(high2$vaccine)
+```
+
+```{r, echo=FALSE}
+summary(low2$vaccine)
+```
+
+Similar to masks, there appears to be a huge difference between vaccine search popularity. It appears that people with above average median income searched vaccine more often than those with below average median income. 
+
+```{r, echo=FALSE}
+summary(high2$quarantine)
+```
+
+```{r, echo=FALSE}
+summary(low2$quarantine)
+```
+
+These doesn't appear to be a huge difference quarantine search popularity between people with above and below average median income.  
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+options(scipen = 5)
+qplot(join2$hh_income, join2$masks, xlab = "household income",  ylab = "masks")
+```
+
+```{r, echo=FALSE}
+summary(lm(masks ~ hh_income, data = join2))
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+options(scipen = 5)
+qplot(join2$hh_income, join2$quarantine, xlab = "household income",  ylab = "quarantine")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+options(scipen = 5)
+qplot(join2$hh_income, join2$vaccine, xlab = "household income",  ylab = "vaccine")
+```
+
+```{r, echo=FALSE}
+summary(lm(vaccine ~ hh_income, data = join2))
+```
+
+There does not appear to be a relationship between any of the covid related keywords and household income. 

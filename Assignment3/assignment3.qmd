@@ -1,0 +1,256 @@
+---
+title: "Assignment3"
+author: "Mychala Walker"
+format: html
+editor: visual
+---
+
+```{r, include=FALSE}
+library(xml2)
+library(rvest)
+library(tidyverse)
+library(tidytext)
+library(dplyr)
+library(stringr)
+library(wordcloud2) #used to create word cloud
+library(devtools) #used to create word cloud
+library(tidyr)
+
+```
+## Web Scraping
+
+In this assignment, your task is to scrape some information from Wikipedia. We start with the following page about Grand Boulevard, a Chicago Community Area. The ultimate goal is to gather the table “Historical population” and convert it to a data.frame.
+
+
+```{r, echo=FALSE}
+url <-  read_html("https://en.wikipedia.org/wiki/Grand_Boulevard,_Chicago")
+
+table <- url %>% 
+  html_elements(css = ".us-census-pop-left") %>% 
+  html_table() 
+
+pop <- table[[1]] %>% 
+  select(., c(1,2,4)) %>% 
+  mutate(across(3, ~ ifelse(row_number() == 1, 0, .))) %>% #change the value in row 1, column 3 to 0
+  filter(row_number() != 11) #remove the last row
+pop
+```
+
+## Expanding to more pages
+
+Can you find the corresponding table in the list of tables that you created earlier? Extract this table as a new
+object.
+
+```{r, echo=FALSE}
+urls1 <- c("https://en.wikipedia.org/wiki/Grand_Boulevard,_Chicago", 
+          "https://en.wikipedia.org/wiki/Armour_Square,_Chicago", 
+          "https://en.wikipedia.org/wiki/Douglas,_Chicago",
+          "https://en.wikipedia.org/wiki/New_City,_Chicago", 
+          "https://en.wikipedia.org/wiki/Washington_Park,_Chicago_(neighborhood)")
+
+# chi <- c("Grand_Boulevard,_Chicago", "Armour_Square,_Chicago", "Douglas,_Chicago", "New_City,_Chicago", "Washington_Park,_Chicago_(neighborhood)")
+# 
+# links <- paste0("https://en.wikipedia.org/wiki/", chi)
+
+
+scraper1 <- function(urls) {
+  
+  all_data <- data.frame()  # Initialize an empty data frame
+  
+  # Loop through each URL in urls2
+  for (url in urls) {
+    
+    # Read the page content
+    page <- read_html(url)
+    
+    # Extract the table with class .us-census-pop-right
+    places <- page %>% 
+      html_elements(css = ".us-census-pop-left") %>% 
+      html_table(fill = TRUE)  # Convert the HTML table to a list of data frames
+    
+    # Extract the title of the page
+    title <- page %>% 
+      html_elements(css = ".mw-page-title-main") %>% 
+      html_text()
+    
+    # Since html_table returns a list, extract the first table from the list
+    places_df <- places[[1]]  # Assuming there's only one table
+    
+    # Add a title column to the places data frame
+    places_df$title <- title  # Repeat the title for every row in the table
+    
+    # Combine this dataset with the full dataset
+    all_data <- rbind(all_data, places_df)  # Append the data for this page
+  }
+  
+  return(all_data)
+}
+
+place_data1 <- scraper1(urls1) %>% 
+  select(., c(1,2,4, 5)) %>% 
+  filter(row_number() != c(11, 22, 33, 44, 55))
+
+
+urls2 <- c("https://en.wikipedia.org/wiki/Oakland,_Chicago", 
+          "https://en.wikipedia.org/wiki/Fuller_Park,_Chicago", 
+          "https://en.wikipedia.org/wiki/Kenwood,_Chicago", 
+          "https://en.wikipedia.org/wiki/Hyde_Park,_Chicago")
+
+# chi2 <- c("Oakland,_Chicago", "Fuller_Park,_Chicago", "Kenwood,_Chicago", "Hyde_Park,_Chicago")
+# 
+# links2 <- paste0("https://en.wikipedia.org/wiki/", chi2)
+
+
+scraper2 <- function(urls) {
+  
+  all_data <- data.frame()  # Initialize an empty data frame
+  
+  # Loop through each URL in urls2
+  for (url in urls) {
+    
+    # Read the page content
+    page <- read_html(url)
+    
+    # Extract the table with class .us-census-pop-right
+    places <- page %>% 
+      html_elements(css = ".us-census-pop-right") %>% 
+      html_table(fill = TRUE)  # Convert the HTML table to a list of data frames
+    
+    # Extract the title of the page
+    title <- page %>% 
+      html_elements(css = ".mw-page-title-main") %>% 
+      html_text()
+    
+    # Since html_table returns a list, extract the first table from the list
+    places_df <- places[[1]]  # Assuming there's only one table
+    
+    # Add a title column to the places data frame
+    places_df$title <- title  # Repeat the title for every row in the table
+    
+    # Combine this dataset with the full dataset
+    all_data <- rbind(all_data, places_df)  # Append the data for this page
+  }
+  
+  return(all_data)
+}
+
+place_data2 <- scraper2(urls2) %>% 
+  select(., c(1,2,4, 5)) %>% 
+  filter(!row_number() %in% c(13, 24, 35, 46))
+
+all_places <- rbind(place_data1, place_data2)
+
+all_places
+```
+
+## Scraping and Analyzing Text Data
+
+Suppose we wanted to take the actual text from the Wikipedia pages instead of just the
+information in the table. Our goal in this section is to extract the text from the body of the
+pages, then do some basic text cleaning and analysis.
+
+```{r, echo = FALSE}
+# url <-  read_html("https://en.wikipedia.org/wiki/Grand_Boulevard,_Chicago")
+# 
+# text <- url %>% 
+#   html_elements(css = ".vcard+ p") %>% 
+#   html_text()
+# 
+# text
+
+# Define the URLs
+urls_full <- c("https://en.wikipedia.org/wiki/Grand_Boulevard,_Chicago",
+               "https://en.wikipedia.org/wiki/Oakland,_Chicago", 
+               "https://en.wikipedia.org/wiki/Fuller_Park,_Chicago", 
+               "https://en.wikipedia.org/wiki/Kenwood,_Chicago", 
+               "https://en.wikipedia.org/wiki/Hyde_Park,_Chicago", 
+               "https://en.wikipedia.org/wiki/Armour_Square,_Chicago", 
+               "https://en.wikipedia.org/wiki/Douglas,_Chicago",
+               "https://en.wikipedia.org/wiki/New_City,_Chicago", 
+               "https://en.wikipedia.org/wiki/Washington_Park,_Chicago_(neighborhood)")
+
+# Scraper function to extract text and title
+scraper3 <- function(urls) {
+  
+  # Initialize an empty data frame with column names Title and Text
+  all_text <- data.frame()
+  
+  # Loop over each URL in the list
+  for (url in urls) {
+    
+    # Read the HTML content of the page
+    page <- read_html(url)
+    
+    # Extract the text from the paragraph after .vcard class
+    text <- page %>% 
+      html_elements(css = ".vcard+ p") %>% 
+      html_text()
+    
+    # Extract the title of the page
+    title <- page %>% 
+      html_elements(css = ".mw-page-title-main") %>% 
+      html_text()
+    
+    # Combine title and text into a data frame and append it to all_text
+    all_text <- rbind(all_text, data.frame(Title = title, Text = text, stringsAsFactors = FALSE))
+  }
+  
+  return(all_text)
+}
+
+# Call the scraper function and store the extracted data
+text_data <- scraper3(urls_full)
+
+# Check the result
+text_data
+```
+
+Plot the most common words within each location. What are some of the similarities between the locations? What are some of the differences?
+
+
+```{r, echo = FALSE}
+scraper4 <- function(urls) {
+  
+  # Initialize an empty data frame with column names Title and Text
+  all_text <- data.frame()
+  
+  # Loop over each URL in the list
+  for (url in urls) {
+    
+    # Read the HTML content of the page
+    page <- read_html(url)
+    
+    # Extract the text from the paragraph after .vcard class
+    text <- page %>% 
+      html_elements(css = ".vcard+ p") %>% 
+      html_text()
+    
+    all_text <- rbind(all_text, 
+                      data.frame(Text = text, 
+                                 stringsAsFactors = FALSE))
+    
+  }
+  
+  return(all_text)
+}
+
+text_data2 <- scraper4(urls_full)
+
+# Assuming text_data2 has a column 'Text'
+text_data_clean <- text_data2 %>% 
+  unnest_tokens(word, Text) %>% #tokenize the data (separate paragraghs and sentences 
+  anti_join(stop_words) %>% 
+  filter(!grepl("[0-9]+", word))
+  
+  
+text_count <- text_data_clean%>%
+  count(word, sort = TRUE) #count the amount of times that each word has been 
+                           # used minus removed words
+wordcloud <- wordcloud2(text_count)
+
+head(text_count, 7)
+wordcloud
+```
+
+
+
