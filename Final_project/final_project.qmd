@@ -232,7 +232,7 @@ colnames(moco)[colnames(moco) == 'S1501_C01_015'] <- 'totaluniversitygrad'
 
 ```{r life-expectancy, include=FALSE, echo=FALSE}
 
-life_expectancy <- read_csv("Final_project/files/U.S._Life_Expectancy_at_Birth_by_State_and_Census_Tract_-_2010-2015.csv") %>% 
+life_expectancy <- read_csv("files/U.S._Life_Expectancy_at_Birth_by_State_and_Census_Tract_-_2010-2015.csv") %>% 
   filter(County %in% "Montgomery County, MD") %>%  
   select(3,4)  
 
@@ -267,7 +267,7 @@ moco <- moco %>%
 ```
 
 ```{r Health-Human-Services-Facilities, include=FALSE, echo=FALSE}
-hhs_df <- read.csv("Final_project/files/Health_and_Human_Services_Facilities_List.csv") %>% 
+hhs_df <- read.csv("files/Health_and_Human_Services_Facilities_List.csv") %>% 
               select(-c(X24.Hour.Emergency.Phone.Number, Link))
 
 #Extract the lat and long onto new variables
@@ -305,7 +305,7 @@ moco <- moco %>%
 ```
 
 ```{r crime, include=FALSE, echo=FALSE}
-Crime <- read_csv("Final_project/files/Crime_20240830.csv") %>% 
+Crime <- read_csv("files/Crime_20240830.csv") %>% 
             select(Start_Date_Time, Victims, 'Crime Name2', 'Police District Name', City, State, 'Zip Code', 'Address Number', 'Street Prefix', 'Street Name', 'Street Suffix', 'Street Type', Latitude, Longitude)
 Crime$Date <- year(mdy_hms(Crime$Start_Date_Time))
 Crime <- Crime %>% 
@@ -374,7 +374,7 @@ moco <- moco %>%
 ```
 
 ```{r grocery-stores, include=FALSE, echo=FALSE}
-grocery_stores <-  read.csv("Final_project/files/Grocery_Stores_and_Markets_20241120.csv")
+grocery_stores <-  read.csv("files/Grocery_Stores_and_Markets_20241120.csv")
 
 grocery_stores <- grocery_stores %>%
   filter(!is.na(Latitude) & !is.na(Longitude)) # remove na for spatial dataset
@@ -405,7 +405,7 @@ moco <- moco %>%
 
 ```{r low-income-schools, include=FALSE, echo=FALSE}
 # Data frame with school names
-schools_df <- read_csv("Final_project/files/FARMS_FY2017_Official_Enrollment_20240829.csv")
+schools_df <- read_csv("files/FARMS_FY2017_Official_Enrollment_20240829.csv")
 schools_df$Center <- gsub("William B. Gibbs, Jr. ES$", "William B. Gibbs Jr. ES", schools_df$Center)
 schools_df$Center <- gsub("JoAnn Leleck ES$", "Joann Leleck Elementary School at Broad Acres", schools_df$Center)
 schools_df$Center <- gsub("Col\\.", "Colonel", schools_df$Center)
@@ -465,7 +465,7 @@ moco_tracts <- tracts(state = "Maryland", county = "Montgomery", cb = TRUE, clas
   mutate(STATEFP = as.character(STATEFP)) %>% 
   mutate(COUNTYFP = as.character(COUNTYFP)) 
 
-walkability <- read.csv("Final_project/files/EPA_SmartLocationDatabase_V3_Jan_2021_Final.csv") %>% 
+walkability <- read.csv("files/EPA_SmartLocationDatabase_V3_Jan_2021_Final.csv") %>% 
   select(c("STATEFP", "COUNTYFP", "TRACTCE", "NatWalkInd")) %>%
   filter(STATEFP == 24 & COUNTYFP == 31) %>% 
   mutate(TRACTCE = as.character(TRACTCE)) %>% 
