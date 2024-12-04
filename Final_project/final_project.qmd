@@ -24,7 +24,6 @@ library(tidygeocoder) #osm data
 library(ggmap) #google maps data
 library(lubridate) #date and time transformation
 Sys.getenv("CENSUS_API_KEY")
-Sys.setenv(GOOGLE_API_KEY = "your_api_key")
 register_google(key = Sys.getenv("GOOGLE_API_KEY"))
 
 ```
